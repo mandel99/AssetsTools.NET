@@ -3,6 +3,7 @@
     public enum SwizzleType
     {
         None,
-        Switch
+        Switch,
+        PS4
     }
 }
