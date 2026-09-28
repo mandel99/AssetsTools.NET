@@ -459,7 +459,7 @@ namespace AssetsTools.NET.Texture
             // native encoder pads to the correct size but does not
             // report the padded size. here we calculate it again and
             // set the correct width and height.
-            var paddedSize = swizzleType == SwizzleType.PS4
+            var paddedSize = swizzleType is SwizzleType.PS4 or SwizzleType.PS5
                 ? new System.Drawing.Size(width, height)
                 : TextureOperations.GetPaddedTextureSize(textureFormat, width, height);
             m_Width = paddedSize.Width;
@@ -489,7 +489,7 @@ namespace AssetsTools.NET.Texture
             {
                 // swizzler will flatten mips to single array
                 flatData = swizzler.ProcessSwizzle(mips, out int[] mipOffsets);
-                if (swizzleType != SwizzleType.PS4)
+                if (swizzleType == SwizzleType.Switch)
                     m_PlatformBlob = swizzler.MakePlatformBlob(mipOffsets, (uint)flatData.Length);
             }
             else
@@ -500,7 +500,7 @@ namespace AssetsTools.NET.Texture
             }
 
             SetPictureData(flatData, width, height, format, mips.Length);
-            if (swizzleType == SwizzleType.PS4)
+            if (swizzleType is SwizzleType.PS4 or SwizzleType.PS5)
             {
                 m_Width = width;
                 m_Height = height;
@@ -520,6 +520,11 @@ namespace AssetsTools.NET.Texture
             {
                 format = Ps4MortonLayout.GetStorageFormat(format);
                 return new Ps4Swizzle(m_Width, m_Height, format);
+            }
+            if (swizzleType == SwizzleType.PS5)
+            {
+                ValidatePs5Metadata();
+                return new Ps5Swizzle(m_Width, m_Height, format, storedSizeHint: m_CompleteImageSize);
             }
             // we are always assuming that we want to swizzle if the type is set
             if (swizzleType == SwizzleType.Switch)
@@ -542,6 +547,8 @@ namespace AssetsTools.NET.Texture
         {
             if (swizzleType == SwizzleType.PS4)
                 return new Ps4Swizzle(width, height, format, pictureData);
+            if (swizzleType == SwizzleType.PS5)
+                return new Ps5Swizzle(width, height, format, pictureData, m_CompleteImageSize);
             // we are always assuming that we want to swizzle if the type is set
             if (swizzleType == SwizzleType.Switch)
             {
@@ -608,20 +615,42 @@ namespace AssetsTools.NET.Texture
 
         #region Public encoders
 
-        private void EncodePs4Pixels(byte[] pixels, int width, int height, TextureFormat format,
+        private void ValidatePs5Metadata()
+        {
+            if (m_ImageCount != 1 || m_TextureDimension != 2 || m_StreamingMipmaps || m_MipCount != 1 || m_MipMap)
+                throw new NotSupportedException("PS5 standard layout currently requires a non-streaming 2D texture with exactly one mip.");
+        }
+
+        private void EncodeConsolePixels(byte[] pixels, int width, int height, TextureFormat format,
             int mipCount, int quality, bool useBgra)
         {
             if (m_ImageCount != 1 || m_TextureDimension != 2 || m_StreamingMipmaps || mipCount != m_MipCount)
-                throw new NotSupportedException("PS4 import requires a non-streaming 2D texture and the original mip count.");
+                throw new NotSupportedException("Console import requires a non-streaming 2D texture and the original mip count.");
             if (width != m_Width || height != m_Height || format != (TextureFormat)m_TextureFormat)
-                throw new NotSupportedException("PS4 import must retain the original dimensions and format.");
-            var chain = new Ps4MipChain(width, height, format, mipCount);
-            var layout = chain.Levels[0];
-            if (pictureData == null || pictureData.Length != chain.TiledSize)
-                throw new InvalidDataException("Load the complete original PS4 texture data before importing. Its size must match the supported Morton layout.");
+                throw new NotSupportedException("Console import must retain the original dimensions and format.");
+            int pixelBlockSize;
+            TextureFormat storageFormat = format;
+            if (swizzleType == SwizzleType.PS5)
+            {
+                ValidatePs5Metadata();
+                if (pictureData == null)
+                    throw new InvalidDataException("Load the complete original PS5 texture data before importing.");
+                int mode = Ps5GfxLayout.InferTileMode(width, height, format, pictureData.Length);
+                pixelBlockSize = new Ps5GfxLayout(width, height, format, mode).PixelBlockSize;
+            }
+            else
+            {
+                var chain = new Ps4MipChain(width, height, format, mipCount);
+                pixelBlockSize = chain.Levels[0].BlockWidth;
+                storageFormat = Ps4MortonLayout.GetStorageFormat(format);
+                if (pictureData == null || pictureData.Length != chain.TiledSize)
+                    throw new InvalidDataException("Load the complete original PS4 texture data before importing. Its size must match the supported Morton layout.");
+            }
+            if (pixels == null || pixels.Length != checked(width * height * 4))
+                throw new InvalidDataException("Imported image must contain exactly four bytes per pixel.");
 
             byte[][] mips;
-            if (layout.BlockWidth == 1)
+            if (pixelBlockSize == 1)
             {
                 // Managed encoders take bottom-up pixels. Preserve Alpha8 SDF
                 // values exactly, without involving a lossy/native compressor.
@@ -631,14 +660,14 @@ namespace AssetsTools.NET.Texture
                 int mw = width, mh = height;
                 for (int mip = 0; mip < mipCount; mip++)
                 {
-                    mips[mip] = Ps4MortonLayout.GetStorageFormat(format) switch
+                    mips[mip] = storageFormat switch
                     {
                         TextureFormat.Alpha8 => RGBAEncoders.EncodeAlpha8(bgra, mw, mh),
                         TextureFormat.R8 => RGBAEncoders.EncodeR8(bgra, mw, mh),
                         TextureFormat.RGBA32 => RGBAEncoders.EncodeRGBA32(bgra, mw, mh),
                         TextureFormat.ARGB32 => RGBAEncoders.EncodeARGB32(bgra, mw, mh),
-                        TextureFormat.BGRA32 => (byte[])bgra.Clone(),
-                        _ => throw new NotSupportedException("Unsupported PS4 pixel format.")
+                        TextureFormat.BGRA32 or TextureFormat.BGRA32Old => (byte[])bgra.Clone(),
+                        _ => throw new NotSupportedException("Unsupported console pixel format.")
                     };
                     if (mip + 1 < mipCount)
                     {
@@ -651,14 +680,14 @@ namespace AssetsTools.NET.Texture
             else
             {
                 if (!TextureEncoderWrapper.NativeLibrariesSupported())
-                    throw new NotSupportedException("PS4 BC import requires the native texture encoder.");
+                    throw new NotSupportedException("Console BC import requires the native texture encoder.");
                 // Native buffer loading handles orientation itself and expects BGRA.
                 var bgra = (byte[])pixels.Clone();
                 if (!useBgra) TextureOperations.SwapRBComponentsInplace(bgra);
                 mips = TextureEncoderWrapper.ConvertImage(bgra, mipCount, format, width, height, quality);
             }
             if (mips == null || mips.Length != mipCount || Array.Exists(mips, mip => mip == null))
-                throw new NotSupportedException("Failed to encode the PS4 texture format.");
+                throw new NotSupportedException("Failed to encode the console texture format.");
             FinalizeEncodedData(mips, width, height, format);
         }
 
@@ -727,9 +756,9 @@ namespace AssetsTools.NET.Texture
         /// <exception cref="NotSupportedException">Thrown if the texture format is not supported for encoding.</exception>
         public void EncodeTextureRaw(byte[] textureData, int width, int height, TextureFormat format, int mipCount = 1, int quality = 3, bool useBgra = true)
         {
-            if (swizzleType == SwizzleType.PS4)
+            if (swizzleType is SwizzleType.PS4 or SwizzleType.PS5)
             {
-                EncodePs4Pixels(textureData, width, height, format, mipCount, quality, useBgra);
+                EncodeConsolePixels(textureData, width, height, format, mipCount, quality, useBgra);
                 return;
             }
             // try with native encoder
@@ -778,10 +807,10 @@ namespace AssetsTools.NET.Texture
         /// <exception cref="NotSupportedException">Thrown if the texture format is not supported for encoding.</exception>
         public void EncodeTextureImage(Stream stream, TextureFormat format, int mipCount = 1, int quality = 3)
         {
-            if (swizzleType == SwizzleType.PS4)
+            if (swizzleType is SwizzleType.PS4 or SwizzleType.PS5)
             {
                 var image = ImageResult.FromStream(stream, StbReadColorComponents.RedGreenBlueAlpha);
-                EncodePs4Pixels(image.Data, image.Width, image.Height, format, mipCount, quality, false);
+                EncodeConsolePixels(image.Data, image.Width, image.Height, format, mipCount, quality, false);
                 return;
             }
             int width, height;
@@ -832,7 +861,7 @@ namespace AssetsTools.NET.Texture
         /// <exception cref="NotSupportedException">Thrown if the texture format is not supported for encoding.</exception>
         public void EncodeTextureImage(string path, TextureFormat format, int mipCount = 1, int quality = 3)
         {
-            if (swizzleType == SwizzleType.PS4)
+            if (swizzleType is SwizzleType.PS4 or SwizzleType.PS5)
             {
                 using var input = File.OpenRead(path);
                 EncodeTextureImage(input, format, mipCount, quality);

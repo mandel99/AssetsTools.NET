@@ -4,6 +4,7 @@
     {
         None,
         Switch,
-        PS4
+        PS4,
+        PS5
     }
 }
