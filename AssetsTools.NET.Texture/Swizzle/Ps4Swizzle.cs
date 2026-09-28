@@ -3,17 +3,19 @@ using System.IO;
 
 namespace AssetsTools.NET.Texture;
 
-/// <summary>PS4 Morton microtiles. Mip tails and macrotiling are not implemented.</summary>
+/// <summary>PS4 Morton microtiles with independently padded mip levels. Packed tails and macrotiling are not implemented.</summary>
 public sealed class Ps4Swizzle : ISwizzler
 {
     private readonly int width, height;
     private readonly Ps4MortonLayout layout;
     private readonly byte[] original;
+    private readonly TextureFormat format;
 
     public Ps4Swizzle(int width, int height, TextureFormat format, byte[] original = null)
     {
         this.width = width;
         this.height = height;
+        this.format = format;
         layout = new Ps4MortonLayout(width, height, format);
         this.original = original;
     }
@@ -40,12 +42,9 @@ public sealed class Ps4Swizzle : ISwizzler
 
     public byte[] ProcessSwizzle(byte[][] mips, out int[] mipOffsets)
     {
-        if (mips.Length != 1)
-            throw new NotSupportedException("PS4 mip chain import is not supported yet.");
-        mipOffsets = new[] { 0 };
-        byte[] padding = original != null && original.Length == layout.TiledSize
-            ? original : new byte[layout.TiledSize];
-        return layout.Swizzle(mips[0], padding);
+        var chain = new Ps4MipChain(width, height, format, mips.Length);
+        mipOffsets = (int[])chain.Offsets.Clone();
+        return chain.Swizzle(mips, original);
     }
 
     // PS4 preprocessing does not require a Switch-style platform blob.

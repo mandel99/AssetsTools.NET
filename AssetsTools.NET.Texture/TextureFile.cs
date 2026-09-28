@@ -1,4 +1,4 @@
-﻿using AssetRipper.TextureDecoder.Astc;
+using AssetRipper.TextureDecoder.Astc;
 using AssetRipper.TextureDecoder.Atc;
 using AssetRipper.TextureDecoder.Bc;
 using AssetRipper.TextureDecoder.Dxt;
@@ -611,13 +611,13 @@ namespace AssetsTools.NET.Texture
         private void EncodePs4Pixels(byte[] pixels, int width, int height, TextureFormat format,
             int mipCount, int quality, bool useBgra)
         {
-            if (m_ImageCount != 1 || m_TextureDimension != 2 || m_MipCount != 1
-                || m_MipMap || m_StreamingMipmaps || mipCount != 1)
-                throw new NotSupportedException("PS4 import currently supports one non-streaming 2D mip only.");
+            if (m_ImageCount != 1 || m_TextureDimension != 2 || m_StreamingMipmaps || mipCount != m_MipCount)
+                throw new NotSupportedException("PS4 import requires a non-streaming 2D texture and the original mip count.");
             if (width != m_Width || height != m_Height || format != (TextureFormat)m_TextureFormat)
                 throw new NotSupportedException("PS4 import must retain the original dimensions and format.");
-            var layout = new Ps4MortonLayout(width, height, format);
-            if (pictureData == null || pictureData.Length != layout.TiledSize)
+            var chain = new Ps4MipChain(width, height, format, mipCount);
+            var layout = chain.Levels[0];
+            if (pictureData == null || pictureData.Length != chain.TiledSize)
                 throw new InvalidDataException("Load the complete original PS4 texture data before importing. Its size must match the supported Morton layout.");
 
             byte[][] mips;
@@ -627,16 +627,26 @@ namespace AssetsTools.NET.Texture
                 // values exactly, without involving a lossy/native compressor.
                 var bgra = TextureOperations.FlipRGBA32Vertically(pixels, width, height);
                 if (!useBgra) TextureOperations.SwapRBComponentsInplace(bgra);
-                byte[] encoded = Ps4MortonLayout.GetStorageFormat(format) switch
+                mips = new byte[mipCount][];
+                int mw = width, mh = height;
+                for (int mip = 0; mip < mipCount; mip++)
                 {
-                    TextureFormat.Alpha8 => RGBAEncoders.EncodeAlpha8(bgra, width, height),
-                    TextureFormat.R8 => RGBAEncoders.EncodeR8(bgra, width, height),
-                    TextureFormat.RGBA32 => RGBAEncoders.EncodeRGBA32(bgra, width, height),
-                    TextureFormat.ARGB32 => RGBAEncoders.EncodeARGB32(bgra, width, height),
-                    TextureFormat.BGRA32 => bgra,
-                    _ => throw new NotSupportedException("Unsupported PS4 pixel format.")
-                };
-                mips = new[] { encoded };
+                    mips[mip] = Ps4MortonLayout.GetStorageFormat(format) switch
+                    {
+                        TextureFormat.Alpha8 => RGBAEncoders.EncodeAlpha8(bgra, mw, mh),
+                        TextureFormat.R8 => RGBAEncoders.EncodeR8(bgra, mw, mh),
+                        TextureFormat.RGBA32 => RGBAEncoders.EncodeRGBA32(bgra, mw, mh),
+                        TextureFormat.ARGB32 => RGBAEncoders.EncodeARGB32(bgra, mw, mh),
+                        TextureFormat.BGRA32 => (byte[])bgra.Clone(),
+                        _ => throw new NotSupportedException("Unsupported PS4 pixel format.")
+                    };
+                    if (mip + 1 < mipCount)
+                    {
+                        bgra = DownsamplePs4Pixels(bgra, mw, mh);
+                        mw = Math.Max(1, mw / 2);
+                        mh = Math.Max(1, mh / 2);
+                    }
+                }
             }
             else
             {
@@ -645,11 +655,35 @@ namespace AssetsTools.NET.Texture
                 // Native buffer loading handles orientation itself and expects BGRA.
                 var bgra = (byte[])pixels.Clone();
                 if (!useBgra) TextureOperations.SwapRBComponentsInplace(bgra);
-                mips = TextureEncoderWrapper.ConvertImage(bgra, 1, format, width, height, quality);
+                mips = TextureEncoderWrapper.ConvertImage(bgra, mipCount, format, width, height, quality);
             }
-            if (mips == null || mips.Length != 1 || mips[0] == null)
+            if (mips == null || mips.Length != mipCount || Array.Exists(mips, mip => mip == null))
                 throw new NotSupportedException("Failed to encode the PS4 texture format.");
             FinalizeEncodedData(mips, width, height, format);
+        }
+
+        // Box filtering in stored channel space, including odd-size edge pixels.
+        // This regenerates lower mips from an edited image; it does not reconstruct
+        // the original authored mip values. Raw mip APIs retain those exactly.
+        private static byte[] DownsamplePs4Pixels(byte[] pixels, int width, int height)
+        {
+            int nw = Math.Max(1, width / 2), nh = Math.Max(1, height / 2);
+            var result = new byte[checked(nw * nh * 4)];
+            for (int y = 0; y < nh; y++)
+            for (int x = 0; x < nw; x++)
+            {
+                int x0 = x * width / nw, x1 = (x + 1) * width / nw;
+                int y0 = y * height / nh, y1 = (y + 1) * height / nh;
+                int count = (x1 - x0) * (y1 - y0);
+                for (int c = 0; c < 4; c++)
+                {
+                    int sum = 0;
+                    for (int sy = y0; sy < y1; sy++)
+                    for (int sx = x0; sx < x1; sx++) sum += pixels[(sy * width + sx) * 4 + c];
+                    result[(y * nw + x) * 4 + c] = (byte)((sum + count / 2) / count);
+                }
+            }
+            return result;
         }
 
         private static void ClampMipCount(int width, int height, ref int mipCount)
