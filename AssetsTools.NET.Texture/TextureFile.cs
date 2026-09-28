@@ -517,7 +517,10 @@ namespace AssetsTools.NET.Texture
         private ISwizzler CreateDeswizzler(ref TextureFormat format)
         {
             if (swizzleType == SwizzleType.PS4)
+            {
+                format = Ps4MortonLayout.GetStorageFormat(format);
                 return new Ps4Swizzle(m_Width, m_Height, format);
+            }
             // we are always assuming that we want to swizzle if the type is set
             if (swizzleType == SwizzleType.Switch)
             {
@@ -624,7 +627,7 @@ namespace AssetsTools.NET.Texture
                 // values exactly, without involving a lossy/native compressor.
                 var bgra = TextureOperations.FlipRGBA32Vertically(pixels, width, height);
                 if (!useBgra) TextureOperations.SwapRBComponentsInplace(bgra);
-                byte[] encoded = format switch
+                byte[] encoded = Ps4MortonLayout.GetStorageFormat(format) switch
                 {
                     TextureFormat.Alpha8 => RGBAEncoders.EncodeAlpha8(bgra, width, height),
                     TextureFormat.R8 => RGBAEncoders.EncodeR8(bgra, width, height),

@@ -18,8 +18,13 @@ public sealed class Ps4MortonLayout
     public int TiledSize { get; }
     private readonly int tilesWide;
 
+    // Unity PS4 preprocessing expands RGB24 to four-byte RGBA storage.
+    public static TextureFormat GetStorageFormat(TextureFormat format)
+        => format == TextureFormat.RGB24 ? TextureFormat.RGBA32 : format;
+
     public Ps4MortonLayout(int width, int height, TextureFormat format)
     {
+        format = GetStorageFormat(format);
         if (width <= 0 || height <= 0) throw new ArgumentOutOfRangeException(nameof(width));
         BlockWidth = format == TextureFormat.Alpha8 || format == TextureFormat.R8
             || format == TextureFormat.RGBA32 || format == TextureFormat.ARGB32
