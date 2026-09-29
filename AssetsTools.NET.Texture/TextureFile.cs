@@ -524,7 +524,8 @@ namespace AssetsTools.NET.Texture
             if (swizzleType == SwizzleType.PS5)
             {
                 ValidatePs5Metadata();
-                return new Ps5Swizzle(m_Width, m_Height, format, storedSizeHint: m_CompleteImageSize);
+                format = Ps5GfxLayout.GetStorageFormat(format);
+                return new Ps5Swizzle(m_Width, m_Height, format, storedSizeHint: m_CompleteImageSize, mipCount: m_MipCount);
             }
             // we are always assuming that we want to swizzle if the type is set
             if (swizzleType == SwizzleType.Switch)
@@ -548,7 +549,7 @@ namespace AssetsTools.NET.Texture
             if (swizzleType == SwizzleType.PS4)
                 return new Ps4Swizzle(width, height, format, pictureData);
             if (swizzleType == SwizzleType.PS5)
-                return new Ps5Swizzle(width, height, format, pictureData, m_CompleteImageSize);
+                return new Ps5Swizzle(width, height, format, pictureData, m_CompleteImageSize, m_MipCount);
             // we are always assuming that we want to swizzle if the type is set
             if (swizzleType == SwizzleType.Switch)
             {
@@ -617,8 +618,8 @@ namespace AssetsTools.NET.Texture
 
         private void ValidatePs5Metadata()
         {
-            if (m_ImageCount != 1 || m_TextureDimension != 2 || m_StreamingMipmaps || m_MipCount != 1 || m_MipMap)
-                throw new NotSupportedException("PS5 standard layout currently requires a non-streaming 2D texture with exactly one mip.");
+            if (m_ImageCount != 1 || m_TextureDimension != 2 || m_StreamingMipmaps || m_MipCount < 1)
+                throw new NotSupportedException("PS5 standard layout requires a non-streaming 2D texture with a valid mip count.");
         }
 
         private void EncodeConsolePixels(byte[] pixels, int width, int height, TextureFormat format,
@@ -635,8 +636,9 @@ namespace AssetsTools.NET.Texture
                 ValidatePs5Metadata();
                 if (pictureData == null)
                     throw new InvalidDataException("Load the complete original PS5 texture data before importing.");
-                int mode = Ps5GfxLayout.InferTileMode(width, height, format, pictureData.Length);
-                pixelBlockSize = new Ps5GfxLayout(width, height, format, mode).PixelBlockSize;
+                var chain = Ps5MipChain.ForUnity(width, height, format, mipCount, pictureData.Length);
+                pixelBlockSize = chain.Levels[0].PixelBlockSize;
+                storageFormat = Ps5GfxLayout.GetStorageFormat(format);
             }
             else
             {

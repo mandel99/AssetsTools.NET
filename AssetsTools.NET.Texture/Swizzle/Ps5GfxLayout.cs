@@ -77,12 +77,16 @@ public sealed class Ps5GfxLayout
     public static bool IsSupportedFormat(TextureFormat format)
         => TryGetElementInfo(format, out _, out _);
 
+    // Observed Unity PS5 preprocessing stores RGB24 as four-byte RGBA elements.
+    public static TextureFormat GetStorageFormat(TextureFormat format)
+        => format == TextureFormat.RGB24 ? TextureFormat.RGBA32 : format;
+
     public static bool TryGetElementInfo(TextureFormat format, out int pixelBlockSize, out int bytesPerElement)
     {
         pixelBlockSize = 1;
         bytesPerElement = 0;
 
-        switch (format)
+        switch (GetStorageFormat(format))
         {
             case TextureFormat.Alpha8:
             case TextureFormat.R8:
@@ -195,7 +199,7 @@ public sealed class Ps5GfxLayout
         return tiled;
     }
 
-    private int TiledOffset(int x, int y)
+    internal int TiledOffset(int x, int y)
     {
         int blockX = x / BlockWidth;
         int blockY = y / BlockHeight;
