@@ -629,6 +629,8 @@ namespace AssetsTools.NET.Texture
                 throw new NotSupportedException("Console import requires a non-streaming 2D texture and the original mip count.");
             if (width != m_Width || height != m_Height || format != (TextureFormat)m_TextureFormat)
                 throw new NotSupportedException("Console import must retain the original dimensions and format.");
+            if (!ConsoleTextureElements.CanEncodeImage(format))
+                throw new NotSupportedException($"Console deswizzle/export supports {format}, but image import is not implemented. Raw encoded conversion remains available.");
             int pixelBlockSize;
             TextureFormat storageFormat = format;
             if (swizzleType == SwizzleType.PS5)

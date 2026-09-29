@@ -82,43 +82,7 @@ public sealed class Ps5GfxLayout
         => format == TextureFormat.RGB24 ? TextureFormat.RGBA32 : format;
 
     public static bool TryGetElementInfo(TextureFormat format, out int pixelBlockSize, out int bytesPerElement)
-    {
-        pixelBlockSize = 1;
-        bytesPerElement = 0;
-
-        switch (GetStorageFormat(format))
-        {
-            case TextureFormat.Alpha8:
-            case TextureFormat.R8:
-                bytesPerElement = 1;
-                return true;
-
-            case TextureFormat.RGBA32:
-            case TextureFormat.ARGB32:
-            case TextureFormat.BGRA32:
-            case TextureFormat.BGRA32Old:
-                bytesPerElement = 4;
-                return true;
-
-            case TextureFormat.DXT1:
-            case TextureFormat.BC4:
-                pixelBlockSize = 4;
-                bytesPerElement = 8;
-                return true;
-
-            case TextureFormat.DXT3:
-            case TextureFormat.DXT5:
-            case TextureFormat.BC5:
-            case TextureFormat.BC6H:
-            case TextureFormat.BC7:
-                pixelBlockSize = 4;
-                bytesPerElement = 16;
-                return true;
-
-            default:
-                return false;
-        }
-    }
+        => ConsoleTextureElements.TryGetInfo(GetStorageFormat(format), out pixelBlockSize, out bytesPerElement);
 
     /// <summary>
     /// Determine the standard Gen5 tile mode from the complete stored byte size.

@@ -26,19 +26,10 @@ public sealed class Ps4MortonLayout
     {
         format = GetStorageFormat(format);
         if (width <= 0 || height <= 0) throw new ArgumentOutOfRangeException(nameof(width));
-        BlockWidth = format == TextureFormat.Alpha8 || format == TextureFormat.R8
-            || format == TextureFormat.RGBA32 || format == TextureFormat.ARGB32
-            || format == TextureFormat.BGRA32 ? 1 : 4;
-        BytesPerBlock = format switch
-        {
-            TextureFormat.Alpha8 or TextureFormat.R8 => 1,
-            TextureFormat.RGBA32 or TextureFormat.ARGB32 or TextureFormat.BGRA32 => 4,
-            TextureFormat.DXT1 or TextureFormat.BC4 => 8,
-            TextureFormat.DXT3 or TextureFormat.DXT5 or TextureFormat.BC5
-                or TextureFormat.BC6H or TextureFormat.BC7 => 16,
-            _ => throw new NotSupportedException(
-                $"PS4 Morton 8x8 supports Alpha8/R8, RGBA32/ARGB32/BGRA32 and BC1-7, not {format}.")
-        };
+        if (!ConsoleTextureElements.TryGetInfo(format, out int block, out int bytes))
+            throw new NotSupportedException($"Unsupported PS4 Morton element format: {format}.");
+        BlockWidth = block;
+        BytesPerBlock = bytes;
         checked
         {
             BlocksWide = (width + BlockWidth - 1) / BlockWidth;
