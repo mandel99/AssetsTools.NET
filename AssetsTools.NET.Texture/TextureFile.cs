@@ -496,11 +496,6 @@ namespace AssetsTools.NET.Texture
             }
 
             SetPictureData(flatData, width, height, format, mips.Length);
-            if (swizzleType is SwizzleType.PS4 or SwizzleType.PS5)
-            {
-                m_Width = width;
-                m_Height = height;
-            }
         }
 
         #endregion
@@ -515,7 +510,7 @@ namespace AssetsTools.NET.Texture
             if (swizzleType == SwizzleType.PS4)
             {
                 format = Ps4MortonLayout.GetStorageFormat(format);
-                return new Ps4Swizzle(m_Width, m_Height, format);
+                return new Ps4Swizzle(m_Width, m_Height, format, mipCount: m_MipCount);
             }
             if (swizzleType == SwizzleType.PS5)
             {
@@ -640,11 +635,11 @@ namespace AssetsTools.NET.Texture
             }
             else
             {
-                var chain = new Ps4MipChain(width, height, format, mipCount);
+                if (pictureData == null)
+                    throw new InvalidDataException("Load the complete original PS4 texture data before importing.");
+                var chain = Ps4MipChain.ForUnity(width, height, format, mipCount, pictureData.Length);
                 pixelBlockSize = chain.Levels[0].BlockWidth;
                 storageFormat = Ps4MortonLayout.GetStorageFormat(format);
-                if (pictureData == null || pictureData.Length != chain.TiledSize)
-                    throw new InvalidDataException("Load the complete original PS4 texture data before importing. Its size must match the supported Morton layout.");
             }
             if (pixels == null || pixels.Length != checked(width * height * 4))
                 throw new InvalidDataException("Imported image must contain exactly four bytes per pixel.");
@@ -652,10 +647,10 @@ namespace AssetsTools.NET.Texture
             byte[][] mips;
             if (pixelBlockSize == 1)
             {
-                // Managed encoders take bottom-up pixels. Preserve Alpha8 SDF
-                // values exactly, without involving a lossy/native compressor.
+                // Managed encoders expect bottom-up pixels and preserve Alpha8 values.
                 var bgra = TextureOperations.FlipRGBA32Vertically(pixels, width, height);
-                if (!useBgra) TextureOperations.SwapRBComponentsInplace(bgra);
+                if (!useBgra)
+                    TextureOperations.SwapRBComponentsInplace(bgra);
                 mips = new byte[mipCount][];
                 int mw = width, mh = height;
                 for (int mip = 0; mip < mipCount; mip++)
@@ -671,7 +666,7 @@ namespace AssetsTools.NET.Texture
                     };
                     if (mip + 1 < mipCount)
                     {
-                        bgra = DownsamplePs4Pixels(bgra, mw, mh);
+                        bgra = DownsampleConsolePixels(bgra, mw, mh);
                         mw = Math.Max(1, mw / 2);
                         mh = Math.Max(1, mh / 2);
                     }
@@ -683,7 +678,8 @@ namespace AssetsTools.NET.Texture
                     throw new NotSupportedException("Console BC import requires the native texture encoder.");
                 // Native buffer loading handles orientation itself and expects BGRA.
                 var bgra = (byte[])pixels.Clone();
-                if (!useBgra) TextureOperations.SwapRBComponentsInplace(bgra);
+                if (!useBgra)
+                    TextureOperations.SwapRBComponentsInplace(bgra);
                 mips = TextureEncoderWrapper.ConvertImage(bgra, mipCount, format, width, height, quality);
             }
             if (mips == null || mips.Length != mipCount || Array.Exists(mips, mip => mip == null))
@@ -691,27 +687,26 @@ namespace AssetsTools.NET.Texture
             FinalizeEncodedData(mips, width, height, format);
         }
 
-        // Box filtering in stored channel space, including odd-size edge pixels.
-        // This regenerates lower mips from an edited image; it does not reconstruct
-        // the original authored mip values. Raw mip APIs retain those exactly.
-        private static byte[] DownsamplePs4Pixels(byte[] pixels, int width, int height)
+        // Average the source pixels for each lower mip, including odd-size edges.
+        private static byte[] DownsampleConsolePixels(byte[] pixels, int width, int height)
         {
             int nw = Math.Max(1, width / 2), nh = Math.Max(1, height / 2);
             var result = new byte[checked(nw * nh * 4)];
             for (int y = 0; y < nh; y++)
-            for (int x = 0; x < nw; x++)
-            {
-                int x0 = x * width / nw, x1 = (x + 1) * width / nw;
-                int y0 = y * height / nh, y1 = (y + 1) * height / nh;
-                int count = (x1 - x0) * (y1 - y0);
-                for (int c = 0; c < 4; c++)
+                for (int x = 0; x < nw; x++)
                 {
-                    int sum = 0;
-                    for (int sy = y0; sy < y1; sy++)
-                    for (int sx = x0; sx < x1; sx++) sum += pixels[(sy * width + sx) * 4 + c];
-                    result[(y * nw + x) * 4 + c] = (byte)((sum + count / 2) / count);
+                    int x0 = x * width / nw, x1 = (x + 1) * width / nw;
+                    int y0 = y * height / nh, y1 = (y + 1) * height / nh;
+                    int count = (x1 - x0) * (y1 - y0);
+                    for (int c = 0; c < 4; c++)
+                    {
+                        int sum = 0;
+                        for (int sy = y0; sy < y1; sy++)
+                            for (int sx = x0; sx < x1; sx++)
+                                sum += pixels[(sy * width + sx) * 4 + c];
+                        result[(y * nw + x) * 4 + c] = (byte)((sum + count / 2) / count);
+                    }
                 }
-            }
             return result;
         }
 
